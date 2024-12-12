@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Quiz</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f9f9f9;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .quiz-container {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+            max-width: 700px;
+            display: grid;
+            grid-template-rows: auto 1fr auto;
+            gap: 20px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+
+        .questions {
+            display: grid;
+            gap: 15px;
+        }
+
+        .question {
+            background: #f3f3f3;
+            padding: 15px;
+            border-radius: 5px;
+            display: grid;
+            gap: 10px;
+        }
+
+        button {
+            background: #007BFF;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            cursor: pointer;
+            border-radius: 5px;
+            text-align: center;
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        .answer-cover {
+            border-radius: 8px;
+            padding: 8px 2px 8px;
+            background: rgba(255, 255, 255, 0.4);
+        }
+
+        input[type="radio"]:checked + label {
+            background-color: #d6eaff;
+            border: 1px solid #007BFF;
+        }
+
+        #result {
+            text-align: center;
+            font-size: 18px;
+            font-weight: bold;
+            color: #007BFF;
+        }
+
+        #threejs-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: -100;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="threejs-container"></div>
+    <div class="quiz-container">
+        <h1>Test Your Knowledge</h1>
+        <form id="quiz-form" class="questions"></form>
+        <div id="buttons" style="text-align: center;">
+            <button type="button" id="submit-button">Submit</button>
+        </div>
+        <div id="result"></div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Fetch questions from the backend
+        function loadQuestions() {
+            fetch('/get-questions')
+                .then(response => response.json())
+                .then(data => {
+                    const quizForm = document.getElementById('quiz-form');
+                    const resultDiv = document.getElementById('result');
+                    const buttonsDiv = document.getElementById('buttons');
+
+                    quizForm.innerHTML = '';
+                    resultDiv.innerText = '';
+
+                    // Render questions dynamically
+                    data.questions.forEach((q, index) => {
+                        const questionDiv = document.createElement('div');
+                        questionDiv.classList.add('question');
+                        questionDiv.innerHTML = `
+                            <p>${index + 1}. ${q.question}</p>
+                            ${q.options.map(option => `
+                                <label class="answer-cover">
+                                    <input type="radio" name="${q.id}" value="${option}" aria-label="Option ${option}">${option}
+                                </label>
+                            `).join('')}
+                        `;
+                        quizForm.appendChild(questionDiv);
+                    });
+
+                    // Reset buttons to show submit button
+                    buttonsDiv.innerHTML = '<button type="button" id="submit-button">Submit</button>';
+
+                    // Attach submit handler
+                    attachSubmitHandler();
+                })
+                .catch(error => console.error('Error fetching questions:', error));
+        }
+
+        // Submit answers to the backend
+        function attachSubmitHandler() {
+            document.getElementById('submit-button').addEventListener('click', function () {
+                const form = document.getElementById('quiz-form');
+                const answers = {};
+
+                // Collect user answers
+                Array.from(form.elements).forEach(input => {
+                    if (input.checked) {
+                        answers[input.name] = input.value;
+                    }
+                });
+
+                // Retrieve telegram_id from the query string
+                const urlParams = new URLSearchParams(window.location.search);
+                const telegramId = urlParams.get('telegram_id');
+                if (telegramId) {
+                    answers.telegram_id = telegramId; // Add telegram_id to the answers object
+                } else {
+                    document.getElementById('result').innerText = 'Telegram ID not found!';
+                    return; // Stop if telegram_id is missing
+                }
+
+                // Send answers to backend for evaluation
+                fetch('/submit-answers', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(answers)
+                })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Failed to submit answers');
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        const quizForm = document.getElementById('quiz-form');
+                        const buttonsDiv = document.getElementById('buttons');
+                        const resultDiv = document.getElementById('result');
+
+                        // Hide quiz questions
+                        quizForm.innerHTML = '';
+                        resultDiv.innerText = `Your score: ${data.score} / ${data.total}`;
+
+                        // Show "Start Again" button
+                        buttonsDiv.innerHTML = '<button type="button" id="restart-button">Start Again</button>';
+
+                        // Attach restart handler
+                        document.getElementById('restart-button').addEventListener('click', loadQuestions);
+                    })
+                    .catch(error => {
+                        document.getElementById('result').innerText = 'Error submitting answers!';
+                        console.error(error);
+                    });
+            });
+        }
+
+        // Load questions on page load
+        loadQuestions();
+
+        const container = document.getElementById('threejs-container');
+
+        // Create Three.js scene, camera, and renderer
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        container.appendChild(renderer.domElement);
+
+        const group = new THREE.Group();
+        const crystalMaterial = new THREE.MeshStandardMaterial({
+            color: 0x80d4ff,
+            emissive: 0x0066cc,
+            metalness: 0.9,
+            roughness: 0.2,
+        });
+
+        for (let i = 0; i < 350; i++) {
+            const geometry = new THREE.TetrahedronGeometry(Math.random() * 2);
+            const crystal = new THREE.Mesh(geometry, crystalMaterial);
+            crystal.position.set(
+                (Math.random() - 0.5) * 55,
+                (Math.random() - 0.5) * 55,
+                (Math.random() - 0.5) * 55
+            );
+            crystal.rotation.set(
+                Math.random() * Math.PI,
+                Math.random() * Math.PI,
+                Math.random() * Math.PI
+            );
+            group.add(crystal);
+        }
+
+        scene.add(group);
+        const ambientLight = new THREE.AmbientLight(0x80d4ff, 1.5);
+        const pointLight = new THREE.PointLight(0x0066cc, 1.2);
+        pointLight.position.set(20, 20, 20);
+        scene.add(ambientLight, pointLight);
+
+        camera.position.z = 50;
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            group.rotation.x += 0.005;
+            group.rotation.y += 0.01;
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
